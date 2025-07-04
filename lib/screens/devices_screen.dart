@@ -5,6 +5,7 @@ import '../providers/mqtt_provider.dart';
 import '../models/device_stats.dart';
 import '../models/sensor_reading.dart';
 import '../widgets/device_detail_dialog.dart';
+import '../screens/sensor_001_screen.dart';
 
 class DevicesScreen extends StatefulWidget {
   @override
@@ -211,7 +212,9 @@ class _DevicesScreenState extends State<DevicesScreen>
             // Filter by online status
             if (_showOnlineOnly) {
               final isOnline =
-                  mqtt.latestDeviceReadings.containsKey(device.deviceId);
+                  mqtt.latestDeviceReadings.containsKey(device.deviceId) ||
+                      (device.deviceId == 'sensor_001' &&
+                          mqtt.latestEnhancedReading != null);
               if (!isOnline) return false;
             }
 
@@ -259,9 +262,13 @@ class _DevicesScreenState extends State<DevicesScreen>
               try {
                 final device = filteredDevices[index];
                 final isOnline =
-                    mqtt.latestDeviceReadings.containsKey(device.deviceId);
-                final latestReading =
-                    mqtt.latestDeviceReadings[device.deviceId];
+                    mqtt.latestDeviceReadings.containsKey(device.deviceId) ||
+                        (device.deviceId == 'sensor_001' &&
+                            mqtt.latestEnhancedReading != null);
+
+                final latestReading = device.deviceId == 'sensor_001'
+                    ? null // Enhanced sensor handled separately
+                    : mqtt.latestDeviceReadings[device.deviceId];
 
                 return _buildDeviceCard(device, isOnline, latestReading);
               } catch (e) {
@@ -275,66 +282,25 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
-  List<DeviceStats> _getCombinedDeviceListSafe(
-    List<DeviceStats> apiDevices,
-    Map<String, SensorReading> mqttDevices,
-  ) {
-    final Map<String, DeviceStats> deviceMap = {};
-
-    try {
-      for (final device in apiDevices) {
-        try {
-          if (device.deviceId.isNotEmpty) {
-            deviceMap[device.deviceId] = device;
-          }
-        } catch (e) {
-          print('❌ Error processing API device: $e');
-        }
-      }
-
-      for (final deviceId in mqttDevices.keys) {
-        try {
-          if (!deviceMap.containsKey(deviceId)) {
-            final reading = mqttDevices[deviceId]!;
-            deviceMap[deviceId] = DeviceStats(
-              deviceId: deviceId,
-              readingCount: 1,
-              normalCount: 1,
-              anomalyCount: 0,
-              avgTemperature: reading.temperature,
-              avgHumidity: reading.humidity,
-              minTemperature: reading.temperature,
-              maxTemperature: reading.temperature,
-              minHumidity: reading.humidity,
-              maxHumidity: reading.humidity,
-              lastReadingTime: reading.timestamp,
-              source: reading.source,
-            );
-          }
-        } catch (e) {
-          print('❌ Error processing MQTT device $deviceId: $e');
-        }
-      }
-    } catch (e) {
-      print('❌ Error in device combination: $e');
-    }
-
-    final deviceList = deviceMap.values.toList();
-    try {
-      deviceList.sort((a, b) => b.lastReadingTime.compareTo(a.lastReadingTime));
-    } catch (e) {
-      print('❌ Error sorting devices: $e');
-    }
-
-    return deviceList;
-  }
-
   Widget _buildDeviceCard(
       DeviceStats device, bool isOnline, SensorReading? latestReading) {
     return Card(
       margin: EdgeInsets.only(bottom: 12),
       child: InkWell(
-        onTap: () => _showDeviceDetails(device, latestReading),
+        onTap: () {
+          // INTEGRASI: Navigasi ke sensor_001 enhanced screen
+          if (device.deviceId == 'sensor_001') {
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (context) => Sensor001Screen(),
+              ),
+            );
+          } else {
+            // Standard device detail dialog
+            _showDeviceDetails(device, latestReading);
+          }
+        },
         borderRadius: BorderRadius.circular(12),
         child: Padding(
           padding: EdgeInsets.all(16),
@@ -362,12 +328,36 @@ class _DevicesScreenState extends State<DevicesScreen>
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        Text(
-                          device.deviceId,
-                          style: TextStyle(
-                            fontWeight: FontWeight.bold,
-                            fontSize: 16,
-                          ),
+                        Row(
+                          children: [
+                            Text(
+                              device.deviceId,
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 16,
+                              ),
+                            ),
+                            // SPECIAL BADGE untuk sensor_001
+                            if (device.deviceId == 'sensor_001') ...[
+                              SizedBox(width: 8),
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 6, vertical: 2),
+                                decoration: BoxDecoration(
+                                  color: Colors.purple,
+                                  borderRadius: BorderRadius.circular(8),
+                                ),
+                                child: Text(
+                                  'ENHANCED',
+                                  style: TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 8,
+                                    fontWeight: FontWeight.bold,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ],
                         ),
                         Text(
                           _getDeviceTypeText(device.deviceId),
@@ -399,8 +389,128 @@ class _DevicesScreenState extends State<DevicesScreen>
 
               SizedBox(height: 16),
 
-              // UPDATED: Current Readings (tanpa status) - hanya data
-              if (isOnline && latestReading != null) ...[
+              // ENHANCED DATA untuk sensor_001
+              if (device.deviceId == 'sensor_001')
+                Consumer<MqttProvider>(
+                  builder: (context, mqtt, child) {
+                    final enhancedReading = mqtt.latestEnhancedReading;
+
+                    if (enhancedReading != null) {
+                      return Column(
+                        children: [
+                          // DHT11 Data
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildSimpleReadingItem(
+                                  'Temperature',
+                                  '${enhancedReading.temperature.toStringAsFixed(1)}°C',
+                                  Icons.thermostat,
+                                  Colors.red,
+                                ),
+                              ),
+                              SizedBox(width: 16),
+                              Expanded(
+                                child: _buildSimpleReadingItem(
+                                  'Humidity',
+                                  '${enhancedReading.humidity.toStringAsFixed(1)}%',
+                                  Icons.water_drop,
+                                  Colors.blue,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 12),
+
+                          // Enhanced Sensors Preview
+                          Row(
+                            children: [
+                              Expanded(
+                                child: _buildEnhancedPreviewItem(
+                                  'PIR Motion',
+                                  enhancedReading.motionDetected == true
+                                      ? 'MOTION'
+                                      : 'STILL',
+                                  enhancedReading.motionDetected == true
+                                      ? Icons.directions_walk
+                                      : Icons.person_outline,
+                                  enhancedReading.motionDetected == true
+                                      ? Colors.red
+                                      : Colors.grey,
+                                ),
+                              ),
+                              SizedBox(width: 16),
+                              Expanded(
+                                child: _buildEnhancedPreviewItem(
+                                  'Rain Sensor',
+                                  enhancedReading.rainIntensity
+                                          ?.toUpperCase() ??
+                                      'NONE',
+                                  enhancedReading.isRaining == true
+                                      ? Icons.umbrella
+                                      : Icons.wb_sunny,
+                                  enhancedReading.isRaining == true
+                                      ? Colors.blue
+                                      : Colors.orange,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 12),
+
+                          // Tap hint
+                          Container(
+                            padding: EdgeInsets.all(8),
+                            decoration: BoxDecoration(
+                              color: Colors.purple.withOpacity(0.1),
+                              borderRadius: BorderRadius.circular(8),
+                            ),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Icon(Icons.touch_app,
+                                    color: Colors.purple, size: 16),
+                                SizedBox(width: 8),
+                                Text(
+                                  'Tap for Enhanced Sensor Details',
+                                  style: TextStyle(
+                                    color: Colors.purple,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w500,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      );
+                    } else {
+                      return Container(
+                        padding: EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: Colors.grey[100],
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Row(
+                          children: [
+                            Icon(Icons.sensors,
+                                color: Colors.grey[600], size: 16),
+                            SizedBox(width: 8),
+                            Text(
+                              'Waiting for enhanced sensor data...',
+                              style: TextStyle(
+                                color: Colors.grey[600],
+                                fontSize: 12,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }
+                  },
+                )
+              // STANDARD DATA untuk sensor lain
+              else if (isOnline && latestReading != null) ...[
                 Row(
                   children: [
                     Expanded(
@@ -424,7 +534,7 @@ class _DevicesScreenState extends State<DevicesScreen>
                 ),
                 SizedBox(height: 12),
 
-                // Last Update Time - UPDATED: tanpa anomaly badge (akan dihandle batch processing)
+                // Last Update Time
                 Row(
                   children: [
                     Icon(Icons.access_time, size: 14, color: Colors.grey[600]),
@@ -512,7 +622,7 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
-  // NEW: Simple reading item tanpa status
+  // Simple reading item tanpa status
   Widget _buildSimpleReadingItem(
     String label,
     String value,
@@ -555,41 +665,51 @@ class _DevicesScreenState extends State<DevicesScreen>
     );
   }
 
-  Widget _buildErrorDeviceCard(int index) {
-    return Card(
-      margin: EdgeInsets.only(bottom: 12),
-      child: Container(
-        padding: EdgeInsets.all(16),
-        child: Row(
-          children: [
-            Icon(Icons.error_outline, color: Colors.red),
-            SizedBox(width: 12),
-            Expanded(
-              child: Text(
-                'Error loading device #$index',
-                style: TextStyle(color: Colors.red),
+  // Enhanced preview item untuk sensor_001 di device list
+  Widget _buildEnhancedPreviewItem(
+    String label,
+    String value,
+    IconData icon,
+    Color color,
+  ) {
+    return Container(
+      padding: EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        border: Border.all(color: color.withOpacity(0.3)),
+        borderRadius: BorderRadius.circular(8),
+        color: color.withOpacity(0.1),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(icon, color: color, size: 14),
+              SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  label,
+                  style: TextStyle(
+                    fontSize: 11,
+                    color: Colors.grey[700],
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
               ),
+            ],
+          ),
+          SizedBox(height: 4),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.bold,
+              color: color,
             ),
-          ],
-        ),
+          ),
+        ],
       ),
     );
-  }
-
-  bool _isHardwareDevice(String deviceId) {
-    return ['sensor_001', 'sensor_002', 'sensor_003'].contains(deviceId);
-  }
-
-  Color _getDeviceTypeColor(String deviceId) {
-    return _isHardwareDevice(deviceId) ? Colors.green : Colors.blue;
-  }
-
-  IconData _getDeviceIcon(String deviceId) {
-    return _isHardwareDevice(deviceId) ? Icons.memory : Icons.computer;
-  }
-
-  String _getDeviceTypeText(String deviceId) {
-    return _isHardwareDevice(deviceId) ? 'Hardware Sensor' : 'Virtual Sensor';
   }
 
   Widget _buildStatColumn(String label, String value) {
@@ -611,6 +731,103 @@ class _DevicesScreenState extends State<DevicesScreen>
         ),
       ],
     );
+  }
+
+  Widget _buildErrorDeviceCard(int index) {
+    return Card(
+      margin: EdgeInsets.only(bottom: 12),
+      child: Container(
+        padding: EdgeInsets.all(16),
+        child: Row(
+          children: [
+            Icon(Icons.error_outline, color: Colors.red),
+            SizedBox(width: 12),
+            Expanded(
+              child: Text(
+                'Error loading device #$index',
+                style: TextStyle(color: Colors.red),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  List<DeviceStats> _getCombinedDeviceListSafe(
+    List<DeviceStats> apiDevices,
+    Map<String, SensorReading> mqttDevices,
+  ) {
+    final Map<String, DeviceStats> deviceMap = {};
+
+    try {
+      for (final device in apiDevices) {
+        try {
+          if (device.deviceId.isNotEmpty) {
+            deviceMap[device.deviceId] = device;
+          }
+        } catch (e) {
+          print('❌ Error processing API device: $e');
+        }
+      }
+
+      for (final deviceId in mqttDevices.keys) {
+        try {
+          if (!deviceMap.containsKey(deviceId)) {
+            final reading = mqttDevices[deviceId]!;
+            deviceMap[deviceId] = DeviceStats(
+              deviceId: deviceId,
+              readingCount: 1,
+              normalCount: 1,
+              anomalyCount: 0,
+              avgTemperature: reading.temperature,
+              avgHumidity: reading.humidity,
+              minTemperature: reading.temperature,
+              maxTemperature: reading.temperature,
+              minHumidity: reading.humidity,
+              maxHumidity: reading.humidity,
+              lastReadingTime: reading.timestamp,
+              source: reading.source,
+            );
+          }
+        } catch (e) {
+          print('❌ Error processing MQTT device $deviceId: $e');
+        }
+      }
+    } catch (e) {
+      print('❌ Error in device combination: $e');
+    }
+
+    final deviceList = deviceMap.values.toList();
+    try {
+      deviceList.sort((a, b) => b.lastReadingTime.compareTo(a.lastReadingTime));
+    } catch (e) {
+      print('❌ Error sorting devices: $e');
+    }
+
+    return deviceList;
+  }
+
+  bool _isHardwareDevice(String deviceId) {
+    return ['sensor_001', 'sensor_002', 'sensor_003'].contains(deviceId);
+  }
+
+  Color _getDeviceTypeColor(String deviceId) {
+    if (deviceId == 'sensor_001')
+      return Colors.purple; // Special color untuk enhanced
+    return _isHardwareDevice(deviceId) ? Colors.green : Colors.blue;
+  }
+
+  IconData _getDeviceIcon(String deviceId) {
+    if (deviceId == 'sensor_001')
+      return Icons.sensors; // Special icon untuk enhanced
+    return _isHardwareDevice(deviceId) ? Icons.memory : Icons.computer;
+  }
+
+  String _getDeviceTypeText(String deviceId) {
+    if (deviceId == 'sensor_001')
+      return 'Enhanced Hardware Sensor (DHT11+PIR+Rain)';
+    return _isHardwareDevice(deviceId) ? 'Hardware Sensor' : 'Virtual Sensor';
   }
 
   void _showDeviceDetails(DeviceStats device, SensorReading? latestReading) {

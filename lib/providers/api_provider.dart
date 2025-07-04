@@ -118,7 +118,7 @@ class BatchAnomalyReport {
 
 class ApiProvider extends ChangeNotifier {
   // API Configuration (adjust IP to your server)
-  static const String baseUrl = 'http://192.168.135.253:8000';
+  static const String baseUrl = 'http://192.168.177.253:8000';
 
   bool _isLoading = false;
   String? _error;
